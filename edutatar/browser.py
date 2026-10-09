@@ -16,6 +16,7 @@ from playwright.sync_api import (
 BASE_URL = "https://edu.tatar.ru"
 LOGIN_PAGE = f"{BASE_URL}/login/"
 PROFILE_PAGE = f"{BASE_URL}/user/anketa"
+GALLERY_PAGE = f"{BASE_URL}/admin/page/gallery"
 
 NEWS_BLOCK_ID = 41120
 NEWS_LIST_PAGE = f"{BASE_URL}/admin/page/news?news_block_id={NEWS_BLOCK_ID}"
@@ -318,6 +319,70 @@ class EduTatarBrowser:
 
         self.log(f"Форма отправлена. Текущий URL: {page.url}")
         return page.url
+
+    def inspect_gallery(self) -> None:
+        import json
+
+        page = self._require_page()
+        self._open_admin_page(GALLERY_PAGE, "Открываю раздел галерей для диагностики...")
+
+        requests: list[dict] = []
+
+        def on_request(request) -> None:
+            if "edu.tatar.ru" not in request.url:
+                return
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                requests.append({
+                    "method": request.method,
+                    "url": request.url,
+                    "post_data": request.post_data,
+                    "resource_type": request.resource_type,
+                })
+
+        page.on("request", on_request)
+
+        snapshot = page.evaluate("""() => ({
+            url: location.href,
+            title: document.title,
+            forms: [...document.forms].map((f, i) => ({
+                index: i,
+                action: f.action,
+                method: f.method,
+                enctype: f.enctype,
+                controls: [...f.querySelectorAll('input, textarea, select, button')].map(el => ({
+                    tag: el.tagName,
+                    type: el.type || null,
+                    name: el.name || null,
+                    id: el.id || null,
+                    value: el.type === 'password' ? '[hidden]' : (el.value || null),
+                    text: el.innerText || null
+                }))
+            })),
+            links: [...document.querySelectorAll('a[href]')].map(a => ({
+                text: (a.innerText || '').trim(),
+                href: a.href
+            })).filter(x => x.href.includes('/admin/page/gallery'))
+        })""")
+
+        out_dir = Path("data")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / "gallery_inspect.json"
+
+        self.log(
+            "Диагностика включена. В браузере создай тестовую галерею и добавь одно фото, "
+            "затем закрой Chromium."
+        )
+        self.wait_until_browser_closed()
+
+        result = {
+            "snapshot": snapshot,
+            "requests": requests,
+        }
+        out_file.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self.log(f"Диагностика сохранена: {out_file}")
 
     def wait_until_browser_closed(self) -> None:
         page = self._require_page()
