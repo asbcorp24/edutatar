@@ -126,6 +126,9 @@ class MainWindow(QMainWindow):
         self.source_edit = QLineEdit()
         self.source_edit.setPlaceholderText("Источник (необязательно)")
 
+        self.gallery_id_edit = QLineEdit()
+        self.gallery_id_edit.setPlaceholderText("ID галереи (если уже создана)")
+
         self.lead_edit = QTextEdit()
         self.lead_edit.setPlaceholderText("Лид / краткий текст")
         self.lead_edit.setMaximumHeight(130)
@@ -163,6 +166,7 @@ class MainWindow(QMainWindow):
         news_form.addRow("Название:", self.title_edit)
         news_form.addRow("Дата:", self.date_edit)
         news_form.addRow("Источник:", self.source_edit)
+        news_form.addRow("ID галереи:", self.gallery_id_edit)
         news_form.addRow("Лид:", self.lead_edit)
         news_form.addRow("Текст новости:", self.text_edit)
 
@@ -294,6 +298,7 @@ class MainWindow(QMainWindow):
             text=self.text_edit.toHtml(),
             trans_region=self.region_check.isChecked(),
             trans_global=self.global_check.isChecked(),
+            gallery_id=self.gallery_id_edit.text().strip(),
         )
 
         answer = QMessageBox.question(
