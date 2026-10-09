@@ -3,9 +3,11 @@ from __future__ import annotations
 import sys
 import traceback
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QDate, QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDateEdit,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -14,11 +16,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from edutatar import EduTatarBrowser
+from edutatar.browser import NewsDraft
 
 
 class BrowserWorker(QObject):
@@ -32,12 +36,14 @@ class BrowserWorker(QObject):
         username: str = "",
         password: str = "",
         news_id: str = "",
+        draft: NewsDraft | None = None,
     ) -> None:
         super().__init__()
         self.action = action
         self.username = username
         self.password = password
         self.news_id = news_id
+        self.draft = draft
 
     def run(self) -> None:
         browser = EduTatarBrowser(log=self.log.emit)
@@ -68,6 +74,12 @@ class BrowserWorker(QObject):
                 browser.wait_until_browser_closed()
                 self.finished.emit("news_edit", True)
 
+            elif self.action == "publish":
+                if self.draft is None:
+                    raise ValueError("Данные новости не переданы.")
+                browser.publish_news(self.draft)
+                self.finished.emit("publish", True)
+
             else:
                 raise ValueError(f"Неизвестное действие: {self.action}")
 
@@ -81,7 +93,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("EduTatar Publisher")
-        self.resize(820, 620)
+        self.resize(940, 860)
 
         self.thread: QThread | None = None
         self.worker: BrowserWorker | None = None
@@ -99,13 +111,37 @@ class MainWindow(QMainWindow):
         self.check_button = QPushButton("Проверить сессию")
 
         self.news_list_button = QPushButton("Список новостей")
-        self.news_create_button = QPushButton("Добавить новость")
+        self.news_create_button = QPushButton("Открыть форму на сайте")
         self.news_id_edit = QLineEdit()
         self.news_id_edit.setPlaceholderText("ID новости, например 4185547")
         self.news_edit_button = QPushButton("Редактировать по ID")
 
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("Название новости")
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("dd.MM.yyyy")
+
+        self.source_edit = QLineEdit()
+        self.source_edit.setPlaceholderText("Источник (необязательно)")
+
+        self.lead_edit = QTextEdit()
+        self.lead_edit.setPlaceholderText("Лид / краткий текст")
+        self.lead_edit.setMaximumHeight(130)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText("Полный текст новости")
+        self.text_edit.setMinimumHeight(180)
+
+        self.region_check = QCheckBox("Транслировать в район")
+        self.global_check = QCheckBox("Транслировать в республику")
+
+        self.publish_button = QPushButton("ОПУБЛИКОВАТЬ НОВОСТЬ")
+
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumHeight(180)
 
         auth_form = QFormLayout()
         auth_form.addRow("Логин:", self.login_edit)
@@ -115,13 +151,25 @@ class MainWindow(QMainWindow):
         auth_buttons.addWidget(self.login_button)
         auth_buttons.addWidget(self.check_button)
 
-        news_buttons = QHBoxLayout()
-        news_buttons.addWidget(self.news_list_button)
-        news_buttons.addWidget(self.news_create_button)
+        nav_buttons = QHBoxLayout()
+        nav_buttons.addWidget(self.news_list_button)
+        nav_buttons.addWidget(self.news_create_button)
 
         edit_news = QHBoxLayout()
         edit_news.addWidget(self.news_id_edit, 1)
         edit_news.addWidget(self.news_edit_button)
+
+        news_form = QFormLayout()
+        news_form.addRow("Название:", self.title_edit)
+        news_form.addRow("Дата:", self.date_edit)
+        news_form.addRow("Источник:", self.source_edit)
+        news_form.addRow("Лид:", self.lead_edit)
+        news_form.addRow("Текст новости:", self.text_edit)
+
+        trans_row = QHBoxLayout()
+        trans_row.addWidget(self.region_check)
+        trans_row.addWidget(self.global_check)
+        trans_row.addStretch(1)
 
         layout = QVBoxLayout()
         layout.addWidget(QLabel("<h2>EduTatar Publisher</h2>"))
@@ -129,10 +177,20 @@ class MainWindow(QMainWindow):
         layout.addLayout(auth_form)
         layout.addLayout(auth_buttons)
         layout.addWidget(QLabel("<b>Новости — блок 41120</b>"))
-        layout.addLayout(news_buttons)
+        layout.addLayout(nav_buttons)
         layout.addLayout(edit_news)
+        layout.addWidget(QLabel("<b>Новая публикация</b>"))
+        layout.addLayout(news_form)
+        layout.addLayout(trans_row)
+        layout.addWidget(
+            QLabel(
+                "Изображение пока загружается через сайт: у edu.tatar.ru используется "
+                "отдельное окно crop/upload, а не обычное поле выбора файла."
+            )
+        )
+        layout.addWidget(self.publish_button)
         layout.addWidget(QLabel("Журнал:"))
-        layout.addWidget(self.log_edit, 1)
+        layout.addWidget(self.log_edit)
 
         root = QWidget()
         root.setLayout(layout)
@@ -140,13 +198,10 @@ class MainWindow(QMainWindow):
 
         self.login_button.clicked.connect(self.login)
         self.check_button.clicked.connect(self.check_session)
-        self.news_list_button.clicked.connect(
-            lambda: self.start_worker("news_list")
-        )
-        self.news_create_button.clicked.connect(
-            lambda: self.start_worker("news_create")
-        )
+        self.news_list_button.clicked.connect(lambda: self.start_worker("news_list"))
+        self.news_create_button.clicked.connect(lambda: self.start_worker("news_create"))
         self.news_edit_button.clicked.connect(self.edit_news)
+        self.publish_button.clicked.connect(self.publish_news)
 
     def append_log(self, message: str) -> None:
         self.log_edit.appendPlainText(message)
@@ -158,6 +213,7 @@ class MainWindow(QMainWindow):
             self.news_list_button,
             self.news_create_button,
             self.news_edit_button,
+            self.publish_button,
         ):
             button.setDisabled(busy)
 
@@ -167,6 +223,7 @@ class MainWindow(QMainWindow):
         username: str = "",
         password: str = "",
         news_id: str = "",
+        draft: NewsDraft | None = None,
     ) -> None:
         if self.thread is not None:
             return
@@ -174,7 +231,7 @@ class MainWindow(QMainWindow):
         self.set_busy(True)
 
         thread = QThread(self)
-        worker = BrowserWorker(action, username, password, news_id)
+        worker = BrowserWorker(action, username, password, news_id, draft)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -218,14 +275,37 @@ class MainWindow(QMainWindow):
         news_id = self.news_id_edit.text().strip()
 
         if not news_id.isdigit():
-            QMessageBox.warning(
-                self,
-                "EduTatar",
-                "Введите числовой ID новости.",
-            )
+            QMessageBox.warning(self, "EduTatar", "Введите числовой ID новости.")
             return
 
         self.start_worker("news_edit", news_id=news_id)
+
+    def publish_news(self) -> None:
+        title = self.title_edit.text().strip()
+        if not title:
+            QMessageBox.warning(self, "EduTatar", "Введите название новости.")
+            return
+
+        draft = NewsDraft(
+            title=title,
+            ndate=self.date_edit.date().toString("dd.MM.yyyy"),
+            source=self.source_edit.text().strip(),
+            lead=self.lead_edit.toHtml(),
+            text=self.text_edit.toHtml(),
+            trans_region=self.region_check.isChecked(),
+            trans_global=self.global_check.isChecked(),
+        )
+
+        answer = QMessageBox.question(
+            self,
+            "Публикация",
+            "Отправить эту новость на edu.tatar.ru?",
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.append_log(f"Публикация: {title}")
+        self.start_worker("publish", draft=draft)
 
     def worker_finished(self, action: str, ok: bool) -> None:
         if action in {"login", "check"}:
@@ -235,6 +315,14 @@ class MainWindow(QMainWindow):
 
         if action == "login" and ok:
             self.password_edit.clear()
+
+        if action == "publish" and ok:
+            self.status_label.setText("● Новость отправлена")
+            QMessageBox.information(
+                self,
+                "EduTatar",
+                "Форма новости успешно отправлена на edu.tatar.ru.",
+            )
 
     def worker_failed(self, details: str) -> None:
         self.append_log(details)
