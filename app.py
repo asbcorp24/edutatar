@@ -6,6 +6,7 @@ import traceback
 from PySide6.QtCore import QDate, QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QCheckBox,
     QDateEdit,
     QFormLayout,
@@ -126,6 +127,10 @@ class MainWindow(QMainWindow):
         self.source_edit = QLineEdit()
         self.source_edit.setPlaceholderText("Источник (необязательно)")
 
+        self.image_path_edit = QLineEdit()
+        self.image_path_edit.setPlaceholderText("Главное изображение")
+        self.image_button = QPushButton("Выбрать изображение")
+
         self.gallery_id_edit = QLineEdit()
         self.gallery_id_edit.setPlaceholderText("ID галереи (если уже создана)")
 
@@ -166,6 +171,12 @@ class MainWindow(QMainWindow):
         news_form.addRow("Название:", self.title_edit)
         news_form.addRow("Дата:", self.date_edit)
         news_form.addRow("Источник:", self.source_edit)
+
+        image_row = QHBoxLayout()
+        image_row.addWidget(self.image_path_edit, 1)
+        image_row.addWidget(self.image_button)
+        news_form.addRow("Изображение:", image_row)
+
         news_form.addRow("ID галереи:", self.gallery_id_edit)
         news_form.addRow("Лид:", self.lead_edit)
         news_form.addRow("Текст новости:", self.text_edit)
@@ -205,6 +216,7 @@ class MainWindow(QMainWindow):
         self.news_list_button.clicked.connect(lambda: self.start_worker("news_list"))
         self.news_create_button.clicked.connect(lambda: self.start_worker("news_create"))
         self.news_edit_button.clicked.connect(self.edit_news)
+        self.image_button.clicked.connect(self.choose_image)
         self.publish_button.clicked.connect(self.publish_news)
 
     def append_log(self, message: str) -> None:
@@ -217,6 +229,7 @@ class MainWindow(QMainWindow):
             self.news_list_button,
             self.news_create_button,
             self.news_edit_button,
+            self.image_button,
             self.publish_button,
         ):
             button.setDisabled(busy)
@@ -284,6 +297,16 @@ class MainWindow(QMainWindow):
 
         self.start_worker("news_edit", news_id=news_id)
 
+    def choose_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите изображение",
+            "",
+            "Изображения (*.jpg *.jpeg *.png *.webp *.bmp);;Все файлы (*.*)",
+        )
+        if path:
+            self.image_path_edit.setText(path)
+
     def publish_news(self) -> None:
         title = self.title_edit.text().strip()
         if not title:
@@ -294,6 +317,7 @@ class MainWindow(QMainWindow):
             title=title,
             ndate=self.date_edit.date().toString("dd.MM.yyyy"),
             source=self.source_edit.text().strip(),
+            image_path=self.image_path_edit.text().strip(),
             lead=self.lead_edit.toHtml(),
             text=self.text_edit.toHtml(),
             trans_region=self.region_check.isChecked(),
