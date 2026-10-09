@@ -26,11 +26,18 @@ class BrowserWorker(QObject):
     finished = Signal(str, bool)
     failed = Signal(str)
 
-    def __init__(self, action: str, username: str = "", password: str = "") -> None:
+    def __init__(
+        self,
+        action: str,
+        username: str = "",
+        password: str = "",
+        news_id: str = "",
+    ) -> None:
         super().__init__()
         self.action = action
         self.username = username
         self.password = password
+        self.news_id = news_id
 
     def run(self) -> None:
         browser = EduTatarBrowser(log=self.log.emit)
@@ -41,31 +48,40 @@ class BrowserWorker(QObject):
             if self.action == "login":
                 ok = browser.login(self.username, self.password)
                 self.finished.emit("login", ok)
+
             elif self.action == "check":
                 ok = browser.is_logged_in()
                 self.finished.emit("check", ok)
-            elif self.action == "open":
-                browser.open_profile()
-                self.log.emit("Страница профиля открыта. Закройте Chromium после проверки.")
-                input("Press Enter to close browser...")
-                self.finished.emit("open", True)
+
+            elif self.action == "news_list":
+                browser.open_news_list()
+                browser.wait_until_browser_closed()
+                self.finished.emit("news_list", True)
+
+            elif self.action == "news_create":
+                browser.open_news_create()
+                browser.wait_until_browser_closed()
+                self.finished.emit("news_create", True)
+
+            elif self.action == "news_edit":
+                browser.open_news_edit(self.news_id)
+                browser.wait_until_browser_closed()
+                self.finished.emit("news_edit", True)
+
             else:
                 raise ValueError(f"Неизвестное действие: {self.action}")
 
         except Exception as exc:
             self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
         finally:
-            # For login/check we can close safely because the persistent
-            # profile stores session state on disk.
-            if self.action != "open":
-                browser.close()
+            browser.close()
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("EduTatar Publisher")
-        self.resize(760, 560)
+        self.resize(820, 620)
 
         self.thread: QThread | None = None
         self.worker: BrowserWorker | None = None
@@ -81,25 +97,40 @@ class MainWindow(QMainWindow):
 
         self.login_button = QPushButton("Войти")
         self.check_button = QPushButton("Проверить сессию")
-        self.open_button = QPushButton("Открыть профиль")
+
+        self.news_list_button = QPushButton("Список новостей")
+        self.news_create_button = QPushButton("Добавить новость")
+        self.news_id_edit = QLineEdit()
+        self.news_id_edit.setPlaceholderText("ID новости, например 4185547")
+        self.news_edit_button = QPushButton("Редактировать по ID")
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
 
-        form = QFormLayout()
-        form.addRow("Логин:", self.login_edit)
-        form.addRow("Пароль:", self.password_edit)
+        auth_form = QFormLayout()
+        auth_form.addRow("Логин:", self.login_edit)
+        auth_form.addRow("Пароль:", self.password_edit)
 
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.login_button)
-        buttons.addWidget(self.check_button)
-        buttons.addWidget(self.open_button)
+        auth_buttons = QHBoxLayout()
+        auth_buttons.addWidget(self.login_button)
+        auth_buttons.addWidget(self.check_button)
+
+        news_buttons = QHBoxLayout()
+        news_buttons.addWidget(self.news_list_button)
+        news_buttons.addWidget(self.news_create_button)
+
+        edit_news = QHBoxLayout()
+        edit_news.addWidget(self.news_id_edit, 1)
+        edit_news.addWidget(self.news_edit_button)
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("<b>edu.tatar.ru</b>"))
+        layout.addWidget(QLabel("<h2>EduTatar Publisher</h2>"))
         layout.addWidget(self.status_label)
-        layout.addLayout(form)
-        layout.addLayout(buttons)
+        layout.addLayout(auth_form)
+        layout.addLayout(auth_buttons)
+        layout.addWidget(QLabel("<b>Новости — блок 41120</b>"))
+        layout.addLayout(news_buttons)
+        layout.addLayout(edit_news)
         layout.addWidget(QLabel("Журнал:"))
         layout.addWidget(self.log_edit, 1)
 
@@ -109,24 +140,41 @@ class MainWindow(QMainWindow):
 
         self.login_button.clicked.connect(self.login)
         self.check_button.clicked.connect(self.check_session)
-        self.open_button.clicked.connect(self.open_profile)
+        self.news_list_button.clicked.connect(
+            lambda: self.start_worker("news_list")
+        )
+        self.news_create_button.clicked.connect(
+            lambda: self.start_worker("news_create")
+        )
+        self.news_edit_button.clicked.connect(self.edit_news)
 
     def append_log(self, message: str) -> None:
         self.log_edit.appendPlainText(message)
 
     def set_busy(self, busy: bool) -> None:
-        self.login_button.setDisabled(busy)
-        self.check_button.setDisabled(busy)
-        self.open_button.setDisabled(busy)
+        for button in (
+            self.login_button,
+            self.check_button,
+            self.news_list_button,
+            self.news_create_button,
+            self.news_edit_button,
+        ):
+            button.setDisabled(busy)
 
-    def start_worker(self, action: str, username: str = "", password: str = "") -> None:
+    def start_worker(
+        self,
+        action: str,
+        username: str = "",
+        password: str = "",
+        news_id: str = "",
+    ) -> None:
         if self.thread is not None:
             return
 
         self.set_busy(True)
 
         thread = QThread(self)
-        worker = BrowserWorker(action, username, password)
+        worker = BrowserWorker(action, username, password, news_id)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -166,15 +214,18 @@ class MainWindow(QMainWindow):
     def check_session(self) -> None:
         self.start_worker("check")
 
-    def open_profile(self) -> None:
-        # This action is intentionally not used yet because keeping a worker
-        # alive while the browser is open needs a dedicated lifecycle.
-        QMessageBox.information(
-            self,
-            "EduTatar",
-            "В первой версии используйте «Проверить сессию». "
-            "Постоянное окно браузера добавим вместе с редактором новостей.",
-        )
+    def edit_news(self) -> None:
+        news_id = self.news_id_edit.text().strip()
+
+        if not news_id.isdigit():
+            QMessageBox.warning(
+                self,
+                "EduTatar",
+                "Введите числовой ID новости.",
+            )
+            return
+
+        self.start_worker("news_edit", news_id=news_id)
 
     def worker_finished(self, action: str, ok: bool) -> None:
         if action in {"login", "check"}:
@@ -183,7 +234,6 @@ class MainWindow(QMainWindow):
             )
 
         if action == "login" and ok:
-            # Do not retain password in the GUI after successful login.
             self.password_edit.clear()
 
     def worker_failed(self, details: str) -> None:
