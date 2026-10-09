@@ -16,13 +16,20 @@ BASE_URL = "https://edu.tatar.ru"
 LOGIN_PAGE = f"{BASE_URL}/login/"
 PROFILE_PAGE = f"{BASE_URL}/user/anketa"
 
+NEWS_BLOCK_ID = 41120
+NEWS_LIST_PAGE = f"{BASE_URL}/admin/page/news?news_block_id={NEWS_BLOCK_ID}"
+NEWS_CREATE_PAGE = f"{BASE_URL}/admin/page/news/edit?news_block_id={NEWS_BLOCK_ID}"
+
+
+def news_edit_page(news_id: int | str) -> str:
+    return (
+        f"{BASE_URL}/admin/page/news/edit/{int(news_id)}"
+        f"?news_block_id={NEWS_BLOCK_ID}"
+    )
+
 
 class EduTatarBrowser:
-    """Browser automation for edu.tatar.ru.
-
-    The class intentionally uses a real persistent Chromium profile instead
-    of manually replaying cookies or HTTP requests.
-    """
+    """Browser automation for edu.tatar.ru."""
 
     def __init__(
         self,
@@ -109,7 +116,6 @@ class EduTatarBrowser:
                 wait_until="domcontentloaded",
             )
         except PlaywrightTimeoutError:
-            # Some installations may land on another authenticated page.
             pass
 
         ok = self.is_logged_in(navigate=False)
@@ -128,7 +134,6 @@ class EduTatarBrowser:
         if "/login" in url or url.rstrip("/").endswith("/logon"):
             return False
 
-        # Do not log cookie values. Only use names as an additional signal.
         cookie_names = {
             c["name"]
             for c in self.context.cookies(BASE_URL)  # type: ignore[union-attr]
@@ -139,6 +144,34 @@ class EduTatarBrowser:
 
         return "HLP" in cookie_names
 
-    def open_profile(self) -> None:
+    def _open_admin_page(self, url: str, description: str) -> None:
         page = self._require_page()
-        page.goto(PROFILE_PAGE, wait_until="domcontentloaded", timeout=30_000)
+        self.log(description)
+        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+
+        if "/login" in page.url.lower():
+            raise RuntimeError("Сессия истекла: сайт вернул страницу входа.")
+
+    def open_profile(self) -> None:
+        self._open_admin_page(PROFILE_PAGE, "Открываю профиль...")
+
+    def open_news_list(self) -> None:
+        self._open_admin_page(NEWS_LIST_PAGE, "Открываю список новостей...")
+
+    def open_news_create(self) -> None:
+        self._open_admin_page(NEWS_CREATE_PAGE, "Открываю форму добавления новости...")
+
+    def open_news_edit(self, news_id: int | str) -> None:
+        self._open_admin_page(
+            news_edit_page(news_id),
+            f"Открываю редактирование новости #{int(news_id)}...",
+        )
+
+    def wait_until_browser_closed(self) -> None:
+        page = self._require_page()
+        self.log("Браузер оставлен открытым. Закройте его для возврата в приложение.")
+        try:
+            while not page.is_closed():
+                page.wait_for_timeout(500)
+        except Exception:
+            pass
