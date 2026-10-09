@@ -75,6 +75,10 @@ class BrowserWorker(QObject):
                 browser.wait_until_browser_closed()
                 self.finished.emit("news_edit", True)
 
+            elif self.action == "gallery_diag":
+                browser.inspect_gallery()
+                self.finished.emit("gallery_diag", True)
+
             elif self.action == "publish":
                 if self.draft is None:
                     raise ValueError("Данные новости не переданы.")
@@ -113,6 +117,7 @@ class MainWindow(QMainWindow):
 
         self.news_list_button = QPushButton("Список новостей")
         self.news_create_button = QPushButton("Открыть форму на сайте")
+        self.gallery_diag_button = QPushButton("Диагностика галереи")
         self.news_id_edit = QLineEdit()
         self.news_id_edit.setPlaceholderText("ID новости, например 4185547")
         self.news_edit_button = QPushButton("Редактировать по ID")
@@ -162,6 +167,7 @@ class MainWindow(QMainWindow):
         nav_buttons = QHBoxLayout()
         nav_buttons.addWidget(self.news_list_button)
         nav_buttons.addWidget(self.news_create_button)
+        nav_buttons.addWidget(self.gallery_diag_button)
 
         edit_news = QHBoxLayout()
         edit_news.addWidget(self.news_id_edit, 1)
@@ -216,6 +222,7 @@ class MainWindow(QMainWindow):
         self.news_list_button.clicked.connect(lambda: self.start_worker("news_list"))
         self.news_create_button.clicked.connect(lambda: self.start_worker("news_create"))
         self.news_edit_button.clicked.connect(self.edit_news)
+        self.gallery_diag_button.clicked.connect(lambda: self.start_worker("gallery_diag"))
         self.image_button.clicked.connect(self.choose_image)
         self.publish_button.clicked.connect(self.publish_news)
 
@@ -229,6 +236,7 @@ class MainWindow(QMainWindow):
             self.news_list_button,
             self.news_create_button,
             self.news_edit_button,
+            self.gallery_diag_button,
             self.image_button,
             self.publish_button,
         ):
