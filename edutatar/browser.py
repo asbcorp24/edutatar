@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -28,8 +29,21 @@ def news_edit_page(news_id: int | str) -> str:
     )
 
 
+@dataclass
+class NewsDraft:
+    title: str
+    ndate: str
+    source: str = ""
+    lead: str = ""
+    text: str = ""
+    trans_region: bool = False
+    trans_global: bool = False
+    gallery_id: str = ""
+    videoteka_id: str = ""
+
+
 class EduTatarBrowser:
-    """Browser automation for edu.tatar.ru."""
+    """Browser automation for edu.tatar.ru using a real persistent Chromium profile."""
 
     def __init__(
         self,
@@ -55,7 +69,6 @@ class EduTatarBrowser:
             headless=headless,
             viewport={"width": 1400, "height": 900},
         )
-
         self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         self.log("Chromium запущен.")
 
@@ -166,6 +179,86 @@ class EduTatarBrowser:
             news_edit_page(news_id),
             f"Открываю редактирование новости #{int(news_id)}...",
         )
+
+    def _set_ckeditor(self, element_id: str, html: str) -> None:
+        page = self._require_page()
+
+        page.locator(f"#{element_id}").wait_for(state="attached", timeout=15_000)
+
+        # CKEditor 4 replaces the textarea visually. If the instance is ready,
+        # write through the editor API; otherwise fill the underlying textarea.
+        has_editor = page.evaluate(
+            """(id) => Boolean(window.CKEDITOR && CKEDITOR.instances && CKEDITOR.instances[id])""",
+            element_id,
+        )
+
+        if has_editor:
+            page.evaluate(
+                """([id, value]) => {
+                    const editor = CKEDITOR.instances[id];
+                    editor.setData(value);
+                    editor.updateElement();
+                }""",
+                [element_id, html],
+            )
+        else:
+            page.locator(f"#{element_id}").fill(html)
+
+    def publish_news(self, draft: NewsDraft) -> str:
+        if not draft.title.strip():
+            raise ValueError("Название новости не заполнено.")
+        if not draft.ndate.strip():
+            raise ValueError("Дата новости не заполнена.")
+
+        page = self._require_page()
+        self.open_news_create()
+
+        self.log("Заполняю название, дату и источник...")
+        page.locator("#news_title").fill(draft.title.strip())
+        page.locator("#news_ndate").fill(draft.ndate.strip())
+        page.locator("#news_source").fill(draft.source.strip())
+
+        self.log("Заполняю лид и текст новости...")
+        self._set_ckeditor("news_lead", draft.lead)
+        self._set_ckeditor("news_text", draft.text)
+
+        if draft.gallery_id:
+            page.locator("#news_gallery_id").select_option(draft.gallery_id)
+
+        if draft.videoteka_id:
+            page.locator("#news_videoteka_id").select_option(draft.videoteka_id)
+
+        region = page.locator("#news_trans_region")
+        if region.count():
+            region.set_checked(draft.trans_region)
+
+        global_box = page.locator("#news_trans_global")
+        if global_box.count():
+            global_box.set_checked(draft.trans_global)
+
+        # The school checkbox is disabled and checked by the site itself.
+        self.log("Отправляю новость...")
+        form = page.locator(
+            f'form[action="/admin/page/news/edit?news_block_id={NEWS_BLOCK_ID}"]'
+        ).first
+
+        # Synchronize both CKEditor instances immediately before submit.
+        page.evaluate(
+            """() => {
+                if (window.CKEDITOR && CKEDITOR.instances) {
+                    Object.values(CKEDITOR.instances).forEach(editor => editor.updateElement());
+                }
+            }"""
+        )
+
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30_000):
+            form.locator('input[type="submit"][value="Сохранить"]').click()
+
+        if "/login" in page.url.lower():
+            raise RuntimeError("Во время сохранения истекла сессия.")
+
+        self.log(f"Форма отправлена. Текущий URL: {page.url}")
+        return page.url
 
     def wait_until_browser_closed(self) -> None:
         page = self._require_page()
