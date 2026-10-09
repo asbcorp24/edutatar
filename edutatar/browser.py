@@ -36,6 +36,7 @@ class NewsDraft:
     source: str = ""
     lead: str = ""
     text: str = ""
+    image_path: str = ""
     trans_region: bool = False
     trans_global: bool = False
     gallery_id: str = ""
@@ -204,6 +205,61 @@ class EduTatarBrowser:
         else:
             page.locator(f"#{element_id}").fill(html)
 
+    def _upload_main_image(self, image_path: str) -> None:
+        page = self._require_page()
+        image_file = Path(image_path)
+
+        if not image_file.is_file():
+            raise ValueError(f"Файл изображения не найден: {image_file}")
+
+        self.log("Открываю окно загрузки изображения...")
+
+        with page.expect_popup(timeout=15_000) as popup_info:
+            page.locator('a[onclick*="upload_crop/show"]').first.click()
+
+        popup = popup_info.value
+        popup.wait_for_load_state("domcontentloaded", timeout=30_000)
+
+        file_input = popup.locator("#inpUplCrop1")
+        file_input.wait_for(state="attached", timeout=15_000)
+
+        self.log(f"Загружаю изображение: {image_file.name}")
+        file_input.set_input_files(str(image_file))
+
+        popup.locator("#imgUplCropContainer1").wait_for(
+            state="visible",
+            timeout=30_000,
+        )
+
+        apply_button = popup.locator(
+            'input[type="button"][value="Применить"]'
+        )
+        apply_button.wait_for(state="visible", timeout=15_000)
+        apply_button.click()
+
+        # The crop window normally writes result into opener and closes itself.
+        try:
+            popup.wait_for_event("close", timeout=15_000)
+        except Exception:
+            pass
+
+        hidden = page.locator("#imgUCAdjData1")
+        hidden.wait_for(state="attached", timeout=15_000)
+
+        try:
+            page.wait_for_function(
+                """() => {
+                    const el = document.getElementById('imgUCAdjData1');
+                    return Boolean(el && el.value && el.value.trim());
+                }""",
+                timeout=15_000,
+            )
+        except Exception:
+            self.log(
+                "Предупреждение: после применения кропа скрытое поле изображения "
+                "не заполнилось автоматически."
+            )
+
     def publish_news(self, draft: NewsDraft) -> str:
         if not draft.title.strip():
             raise ValueError("Название новости не заполнено.")
@@ -221,6 +277,9 @@ class EduTatarBrowser:
         self.log("Заполняю лид и текст новости...")
         self._set_ckeditor("news_lead", draft.lead)
         self._set_ckeditor("news_text", draft.text)
+
+        if draft.image_path:
+            self._upload_main_image(draft.image_path)
 
         if draft.gallery_id:
             page.locator("#news_gallery_id").select_option(draft.gallery_id)
